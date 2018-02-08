@@ -17,14 +17,26 @@
 
 #define SIZE 1024
 
+/*
+ *  include socket library
+ *  create UDP socket for server
+ *  get user keyboard input
+ *  attach server name, port to message; send into socket
+ *  read reply char from socket into string
+ *  print out received string and close socket
+ */
+
 int main(int argc, char **argv) {
-    int sock, port, bytes;
+    int sockfd, port, bytes;
     char buffer[SIZE];
     struct sockaddr_in serv_addr;
     socklen_t addr_size;
     
-    if (argc != 3) {
-        printf("Usage: %s <port number> <ip of server>\n", argv[0]);
+    Packet p_send, p_recv;
+    int ack_recv = 1;
+    
+    if (argc != 5) {
+        printf("Usage: %s <port number> <ip of server> <source file> <destination file>\n", argv[0]);
         return -1;
     }
     
@@ -41,37 +53,72 @@ int main(int argc, char **argv) {
     addr_size = sizeof(serv_addr);
     
     //create UDP socket for server
-    if ((sock = socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
+    if ((sockfd = socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("Could not create socket");
         return -1;
     }
     
-    while (1) {
+    //send output file name to server
+    write(sockfd, argv[4], strlen(argv[4]) + 1);
+    
+    //send file to server
+    FILE *fr;
+    fr = fopen(argv[3], "r");
+    if (fr == NULL) {
+        printf("File %s not found.\n", argv[3]);
+        return -1;
+    }
+    
+    do {
+        //change to file not stdin
         fgets(buffer, SIZE, stdin);
+        strcpy(p_send.data, buffer);
         bytes = strlen(buffer) + 1;
         
-        printf("Sending: %s\n", buffer);
-        sendto(sock, buffer, bytes, 0, (struct sockaddr *)&serv_addr, addr_size);
+        p_send.head.chksum = chksum(buffer,SIZE);
         
-        bytes = recvfrom(sock, buffer, SIZE, 0, NULL, NULL);
-        printf("Received: %s\n", buffer);
+        printf("[+] Packet sent.\n");
+        sendto(sockfd, &p_send, sizeof(Packet), 0, (struct sockaddr *)&serv_addr, addr_size);
         
-        close(sock);
-        return 0;
-    }
+        bytes = recvfrom(sockfd, &p_recv, sizeof(Packet), 0, NULL, NULL);
+        
+        if (bytes > 0) {
+            printf("[+] ACK received.\n");
+            p_recv.head.seq_ack = 1;
+        } else {
+            printf("[-] ACK not received.\n");
+            p_recv.head.seq_ack = 0;
+        }
+
+    } while (p_send.head.chksum != p_recv.head.chksum || p_send.head.seq_ack != p_recv.head.seq_ack);
+    
+    close(sockfd);
+    return 0;
 }
-/*
+
 int chksum(char *buffer, size_t buff_size) {
-    char *p,*cs;
+    char *p,cs;
     p = (char *)buffer;
-    cs = p++;
+    cs = *p++;
     
     for (int i = 0; i < buff_size; i++) {
-        cs = cs ^ *p;
+        cs ^= *p;
         cs++;
         p++;
     }
     
     return (int)cs;
 }
-*/
+
+int csum(char *buffer, size_t buff_size) {
+    long p;
+    
+    for (p = 0; buff_size > 0; buff_size--) {
+        p += *buffer++;
+    }
+    
+    p = (p >> 16) + (p &0xffff);
+    p += (sum >> 16);
+    return (int)(~sum);
+}
+
