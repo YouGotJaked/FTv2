@@ -14,8 +14,9 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include "protocol.h"
+#include "csum.c"
 
-#define SIZE 1024
+extern int csum(char *buffer, size_t buff_size);
 
 /*
  *  include socket library
@@ -28,12 +29,10 @@
 
 int main(int argc, char **argv) {
     int sockfd, port, bytes;
-    char buffer[SIZE];
     struct sockaddr_in serv_addr;
     socklen_t addr_size;
-    
-    Packet p_send, p_recv;
-    int ack_recv = 1;
+    Packet p_client, p_server;
+    p_client.head.chksum = 0;
     
     if (argc != 5) {
         printf("Usage: %s <port number> <ip of server> <source file> <destination file>\n", argv[0]);
@@ -59,9 +58,11 @@ int main(int argc, char **argv) {
     }
     
     //send output file name to server
-    write(sockfd, argv[4], strlen(argv[4]) + 1);
+    strcpy(p_server.data, argv[4]);
+    sendto(sockfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_addr, addr_size);
+    printf("Sent filename: [%s]\n",p_server.data);
     
-    //send file to server
+    //initialize file
     FILE *fr;
     fr = fopen(argv[3], "r");
     if (fr == NULL) {
@@ -70,55 +71,44 @@ int main(int argc, char **argv) {
     }
     
     do {
-        //change to file not stdin
-        fgets(buffer, SIZE, stdin);
-        strcpy(p_send.data, buffer);
-        bytes = strlen(buffer) + 1;
-        
-        p_send.head.chksum = chksum(buffer,SIZE);
-        
-        printf("[+] Packet sent.\n");
-        sendto(sockfd, &p_send, sizeof(Packet), 0, (struct sockaddr *)&serv_addr, addr_size);
-        
-        bytes = recvfrom(sockfd, &p_recv, sizeof(Packet), 0, NULL, NULL);
-        
-        if (bytes > 0) {
-            printf("[+] ACK received.\n");
-            p_recv.head.seq_ack = 1;
-        } else {
-            printf("[-] ACK not received.\n");
-            p_recv.head.seq_ack = 0;
+        //send data
+        while ((bytes = fread(p_client.data, 1, sizeof(p_client.data), fr)) != 0) {
+            printf(" data: [%s], bytes: [%d]", p_client.data,bytes);
+            //p_client.head.len += sendto(sockfd, p_client.data, bytes, 0, (struct sockaddr *)&serv_addr, addr_size);
+            p_client.head.len += sendto(sockfd, (char*)&p_client, bytes, 0, (struct sockaddr *)&serv_addr, addr_size);
         }
-
-    } while (p_send.head.chksum != p_recv.head.chksum || p_send.head.seq_ack != p_recv.head.seq_ack);
+        printf("Sent data: [%s]\n",p_client.data);
+        if (p_client.head.len > 0) {
+            printf("[+] Packet sent.\n");
+            printf("Client len: %d\n", p_client.head.len);
+            p_client.head.seq_ack = 1;
+        } else {
+            perror("[-] Packet not sent.\n");
+            p_client.head.seq_ack = 0;
+        }
+    
+        //compute and send checksum
+        p_client.head.chksum = chksum((char*)&p_client, sizeof(p_client));
+        //sendto(sockfd, &p_client.head.chksum, sizeof(int), 0, (struct sockaddr *)&serv_addr, addr_size);
+        sendto(sockfd, (char*)&p_client, sizeof(p_client), 0, (struct sockaddr *)&serv_addr, addr_size);
+        printf("Client checksum: %d\n",p_client.head.chksum);
+    
+        //receive length and checksum from server
+        recvfrom(sockfd, &p_server.head.len, sizeof(int), 0, (struct sockaddr *)&serv_addr, &addr_size);
+        printf("Server len: %d\n",p_server.head.len);
+    
+        recvfrom(sockfd, &p_server.head.chksum, sizeof(int), 0, (struct sockaddr *)&serv_addr, &addr_size);
+        printf("Server checksum: %d\n",p_server.head.chksum);
+        
+        p_server.head.seq_ack = p_server.head.len > 0 ? 1 : 0;
+        if (p_server.head.len > 0) {
+            printf("[+] ACK received.\n");
+        } else {
+            perror("[-] ACK not received.\n");
+        }
+    } while (p_client.head.chksum != p_server.head.chksum || p_client.head.seq_ack != p_server.head.seq_ack);
     
     close(sockfd);
     return 0;
-}
-
-int chksum(char *buffer, size_t buff_size) {
-    char *p,cs;
-    p = (char *)buffer;
-    cs = *p++;
-    
-    for (int i = 0; i < buff_size; i++) {
-        cs ^= *p;
-        cs++;
-        p++;
-    }
-    
-    return (int)cs;
-}
-
-int csum(char *buffer, size_t buff_size) {
-    long p;
-    
-    for (p = 0; buff_size > 0; buff_size--) {
-        p += *buffer++;
-    }
-    
-    p = (p >> 16) + (p &0xffff);
-    p += (sum >> 16);
-    return (int)(~sum);
 }
 

@@ -1,18 +1,21 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-struct header {
+#define SIZE 10
+
+typedef struct header {
     int seq_ack;
     int len;
     int chksum;
-}Header;
+} Header;
 
-struct packet {
+typedef struct packet {
     struct header head;
-    char data[10];
-}Packet;
+    char data[SIZE];
+} Packet;
 
 int chksum(char *buffer, size_t buff_size);
+int csum(char *buffer, size_t buff_size);
 
 #endif /* PROTOCOL_H */
 
