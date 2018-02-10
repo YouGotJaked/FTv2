@@ -1,18 +1,16 @@
 #include "protocol.h"
 
-int chksum(char *buffer, size_t buff_size) {
+int chksum(Packet* pkt, size_t size) {
     int i;
-    char *p = (char*)p,cs;
-    p = (char *)buffer;
-    cs = *p++;
+    char *head = (char*)pkt;
+    char csum = head[0];
+    (*pkt).head.chksum = 0;
     
-    for (i = 0; i < buff_size; i++) {
-        cs ^= *p;
-        cs++;
-        p++;
+    for (i = 0; i < size; i++) {
+        csum ^= head[i];
     }
     
-    return (int)cs;
+    return (int)csum;
 }
 
 int comp_packet(Packet p1, Packet p2) {

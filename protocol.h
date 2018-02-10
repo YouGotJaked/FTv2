@@ -1,8 +1,6 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#define TRUE  (1 == 1)
-#define FALSE (!TRUE)
 #define SIZE 10
 #define MAX_ATTEMPTS 5
 #define SLEEP 2000000
@@ -18,7 +16,7 @@ typedef struct packet {
     char data[SIZE];
 } Packet;
 
-int chksum(char *buffer, size_t buff_size);
+int chksum(Packet* pkt, size_t size);
 int comp_packet(Packet p1, Packet p2);
 int micros_to_s(int s);
 
