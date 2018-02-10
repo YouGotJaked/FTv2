@@ -1,7 +1,11 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#define TRUE  (1 == 1)
+#define FALSE (!TRUE)
 #define SIZE 10
+#define MAX_ATTEMPTS 5
+#define SLEEP 2000000
 
 typedef struct header {
     int seq_ack;
@@ -15,8 +19,7 @@ typedef struct packet {
 } Packet;
 
 int chksum(char *buffer, size_t buff_size);
-int csum(char *buffer, size_t buff_size);
+int comp_packet(Packet p1, Packet p2);
+int micros_to_s(int s);
 
 #endif /* PROTOCOL_H */
-
-// helpful: https://www.youtube.com/watch?v=tPzoRLCX-Ps

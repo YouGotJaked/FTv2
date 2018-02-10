@@ -13,10 +13,9 @@
 #include <errno.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <time.h>
 #include "protocol.h"
-#include "csum.c"
-
-extern int csum(char *buffer, size_t buff_size);
+#include "protocol.c"
 
 /*
  *  include socket library
@@ -28,9 +27,10 @@ extern int csum(char *buffer, size_t buff_size);
  */
 
 int main(int argc, char **argv) {
-    int sockfd, port, bytes;
+    int sockfd, port, bytes, init = TRUE, timeout = 0;
     struct sockaddr_in serv_addr;
     socklen_t addr_size;
+    time_t t;
     Packet p_client, p_server;
     p_client.head.chksum = 0;
     
@@ -56,12 +56,7 @@ int main(int argc, char **argv) {
         perror("Could not create socket");
         return -1;
     }
-    
-    //send output file name to server
-    strcpy(p_server.data, argv[4]);
-    sendto(sockfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_addr, addr_size);
-    printf("Sent filename: [%s]\n",p_server.data);
-    
+
     //initialize file
     FILE *fr;
     fr = fopen(argv[3], "r");
@@ -70,45 +65,71 @@ int main(int argc, char **argv) {
         return -1;
     }
     
-    do {
-        //send data
-        while ((bytes = fread(p_client.data, 1, sizeof(p_client.data), fr)) != 0) {
-            printf(" data: [%s], bytes: [%d]", p_client.data,bytes);
-            //p_client.head.len += sendto(sockfd, p_client.data, bytes, 0, (struct sockaddr *)&serv_addr, addr_size);
-            p_client.head.len += sendto(sockfd, (char*)&p_client, bytes, 0, (struct sockaddr *)&serv_addr, addr_size);
+    //initialize RNG
+    srand((unsigned) time(&t));
+    
+    while (1) {
+        //reset
+        fseek(fr, 0, SEEK_SET);
+        p_client.head.len = 0;
+        bytes = 0;
+        
+        //send filename and data only first time around
+        if (init) {
+            strcpy(p_server.data, argv[4]);
+            sendto(sockfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_addr, addr_size);
+            printf("Sent filename: [%s]\n",p_server.data);
+            init = FALSE;
         }
-        printf("Sent data: [%s]\n",p_client.data);
+        
+        while ((bytes = fread(p_client.data, 1, sizeof(p_client.data), fr)) > 0) {
+            p_client.head.len = bytes;
+            printf("Sent data: [%s], Packet size: [%d]\n", p_client.data, p_client.head.len);
+            sendto(sockfd, (char*)&p_client, sizeof(p_client), 0, (struct sockaddr *)&serv_addr, addr_size);
+        }
+
+        
         if (p_client.head.len > 0) {
             printf("[+] Packet sent.\n");
-            printf("Client len: %d\n", p_client.head.len);
             p_client.head.seq_ack = 1;
         } else {
-            perror("[-] Packet not sent.\n");
+            printf("[-] Packet not sent.\n");
             p_client.head.seq_ack = 0;
         }
-    
-        //compute and send checksum
-        p_client.head.chksum = chksum((char*)&p_client, sizeof(p_client));
-        //sendto(sockfd, &p_client.head.chksum, sizeof(int), 0, (struct sockaddr *)&serv_addr, addr_size);
+        
+        printf("Client len: %d\n", p_client.head.len);
+        //compute and send checksum with 10% chance to send 0
+        p_client.head.chksum = rand() % 100 > 10 ? chksum((char*)&p_client, sizeof(p_client)) : 0;
         sendto(sockfd, (char*)&p_client, sizeof(p_client), 0, (struct sockaddr *)&serv_addr, addr_size);
         printf("Client checksum: %d\n",p_client.head.chksum);
     
         //receive length and checksum from server
-        recvfrom(sockfd, &p_server.head.len, sizeof(int), 0, (struct sockaddr *)&serv_addr, &addr_size);
+        recvfrom(sockfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_addr, &addr_size);
         printf("Server len: %d\n",p_server.head.len);
     
-        recvfrom(sockfd, &p_server.head.chksum, sizeof(int), 0, (struct sockaddr *)&serv_addr, &addr_size);
+        recvfrom(sockfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_addr, &addr_size);
         printf("Server checksum: %d\n",p_server.head.chksum);
         
         p_server.head.seq_ack = p_server.head.len > 0 ? 1 : 0;
-        if (p_server.head.len > 0) {
-            printf("[+] ACK received.\n");
-        } else {
-            perror("[-] ACK not received.\n");
-        }
-    } while (p_client.head.chksum != p_server.head.chksum || p_client.head.seq_ack != p_server.head.seq_ack);
-    
+        
+        //if (comp_packet(p_server, p_client)) {
+            printf("[+] ACK1 received.\n");
+            goto exit;
+        //} else {
+            printf("[-] ACK0 received.\n");
+            printf("Waiting for %d seconds...\n",micros_to_s(SLEEP));
+            usleep(SLEEP);
+        //}
+        
+        if (++timeout > MAX_ATTEMPTS)
+            goto timeout;
+    }
+    exit: fclose(fr);
     close(sockfd);
     return 0;
+    
+    timeout:
+    printf("Timed out...\n");
+    return -1;
 }
 

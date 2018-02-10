@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include "protocol.h"
-#include "csum.c"
+#include "protocol.c"
 
 /*
  *  create UDP socket
@@ -25,7 +25,7 @@
  */
 
 int main(int argc, char **argv) {
-    int connfd = 0, bytes;
+    int connfd = 0, bytes, init = TRUE,n;
     struct sockaddr_in serv_addr, client_addr;
     struct sockaddr_storage serv_storage;
     socklen_t addr_size, client_addr_size;
@@ -58,45 +58,54 @@ int main(int argc, char **argv) {
         return -1;
     }
     
-    //loop forever
     while (1) {
-        //initialize checksum to 0
+        //reset
+        p_server.head.len = 0;
         p_server.head.chksum = 0;
+        int n=5;
         
-        //get file name from client
-        recvfrom(connfd, (char*)&p_client, sizeof(p_client), 0, (struct sockaddr *)&serv_storage, &addr_size);
-        printf("Received file name: [%s]\n",p_client.data);
-        fp = fopen(p_client.data, "wb");
-        if (fp == NULL) {
-            return -1;
+        //get file name from client only once
+        if (init) {
+            recvfrom(connfd, (char*)&p_client, sizeof(p_client), 0, (struct sockaddr *)&serv_storage, &addr_size);
+            printf("Received file name: [%s]\n",p_client.data);
+            fp = fopen(p_client.data, "wb");
+            if (fp == NULL) {
+                return -1;
+            }
+            init = FALSE;
         }
-	
+        
         //read data from client
         do {
-            bytes = recvfrom(connfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_storage, &addr_size);
-            printf(" data: [%s], bytes: [%d]", p_server.data,bytes);
-            fwrite(p_server.data, sizeof(char), bytes, fp);
-            p_server.head.len += bytes;
-        } while (bytes > (SIZE - 1));
-        
+            recvfrom(connfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_storage, &addr_size);
+            printf("Received data: [%s], Packet size: [%d]\n", p_server.data,p_server.head.len);
+            bytes = p_server.head.len < sizeof(p_server.data) ? p_server.head.len : sizeof(p_server.data);
+            fwrite(p_server.data, 1, bytes, fp);
+        } while (p_server.head.len >= sizeof(p_server.data));
+
         if (p_server.head.len > 0) {
             printf("[+] Packet received: %s\n", p_server.data);
         }
         
         //save copy of checksum from client header
-        //recvfrom(connfd, &p_client.head.chksum, sizeof(int), 0, (struct sockaddr *)&serv_storage, &addr_size);
         recvfrom(connfd, (char*)&p_client, sizeof(p_client), 0, (struct sockaddr *)&serv_storage, &addr_size);
         printf("Client checksum = %d\n",p_client.head.chksum);
         
-        //send length and checksum;
+        //send server side length and checksum;
         p_server.head.chksum = chksum((char*)&p_server, sizeof(p_server));
         printf("Server checksum = %d\n",p_server.head.chksum);
-        sendto(connfd, &p_server.head.len, sizeof(int), 0, (struct sockaddr *)&serv_storage, addr_size);
-        sendto(connfd, &p_server.head.chksum, sizeof(int), 0, (struct sockaddr *)&serv_storage, addr_size);
+        sendto(connfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_storage, addr_size);
+        sendto(connfd, (char*)&p_server, sizeof(p_server), 0, (struct sockaddr *)&serv_storage, addr_size);
         
-        fclose(fp);
-        close(connfd);
-        return 0;
+        //if (comp_packet(p_server, p_client)) {
+            printf("[+] ACK1 sent.\n");
+            goto exit;
+        //} else {
+            printf("[-] ACK0 sent.\n");
+        //}
     }
+    exit: fclose(fp);
+    close(connfd);
+    return 0;
 }
 
